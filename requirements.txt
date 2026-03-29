@@ -1,0 +1,4 @@
+aiogram
+Pillow
+aiohttp
+psycopg2-binary
