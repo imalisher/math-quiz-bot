@@ -17,7 +17,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from PIL import Image, ImageDraw
 
 BOT_TOKEN = "8715023932:AAGPYpZ6VY6v_fGeuvN6Ru7KaC0GmBwGcUE" # O'zingizning tokeningiz
-
+ADMIN_ID = 8496927148 
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -36,10 +36,9 @@ def get_db_conn():
 def init_db():
     conn = get_db_conn()
     cursor = conn.cursor()
-    # PostgreSQL'da AUTOINCREMENT o'rniga SERIAL ishlatiladi
-    cursor.execute('''CREATE TABLE IF NOT EXISTS tests (id SERIAL PRIMARY KEY, name TEXT UNIQUE)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS tests (id SERIAL PRIMARY KEY, name TEXT UNIQUE, creator_id BIGINT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS questions (
-            id SERIAL PRIMARY KEY, test_id INTEGER,
+            id SERIAL PRIMARY KEY, test_id INTEGER, creator_id BIGINT,
             question_photo_id TEXT, correct_answer_photo_id TEXT,
             wrong1_photo_id TEXT, wrong2_photo_id TEXT, wrong3_photo_id TEXT,
             time_limit INTEGER DEFAULT 60
@@ -145,7 +144,8 @@ async def get_test_range(message: types.Message, state: FSMContext):
     final_test_name = f"{data['base_name']} {message.text}"
     conn = get_db_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO tests (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (final_test_name,))
+    # O'zgartiriladigan 2 qator:
+    cursor.execute("INSERT INTO tests (name, creator_id) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING", (final_test_name, message.from_user.id))
     cursor.execute("SELECT id FROM tests WHERE name=%s", (final_test_name,))
     test_id = cursor.fetchone()[0]
     conn.commit()
@@ -158,7 +158,8 @@ async def get_test_range(message: types.Message, state: FSMContext):
 async def get_new_test_name(message: types.Message, state: FSMContext):
     conn = get_db_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO tests (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (message.text,))
+    # O'zgartiriladigan 2 qator:
+    cursor.execute("INSERT INTO tests (name, creator_id) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING", (message.text, message.from_user.id))
     cursor.execute("SELECT id FROM tests WHERE name=%s", (message.text,))
     test_id = cursor.fetchone()[0]
     conn.commit()
@@ -208,9 +209,10 @@ async def process_time_limit(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     conn = get_db_conn()
     cursor = conn.cursor()
-    cursor.execute('''INSERT INTO questions (test_id, question_photo_id, correct_answer_photo_id, wrong1_photo_id, wrong2_photo_id, wrong3_photo_id, time_limit) 
-                      VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
-                   (data['test_id'], data['q'], data['a'], data['w1'], data['w2'], data['w3'], time_limit))
+    # O'zgartiriladigan qism:
+    cursor.execute('''INSERT INTO questions (test_id, creator_id, question_photo_id, correct_answer_photo_id, wrong1_photo_id, wrong2_photo_id, wrong3_photo_id, time_limit) 
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''', 
+               (data['test_id'], call.from_user.id, data['q'], data['a'], data['w1'], data['w2'], data['w3'], time_limit))
     conn.commit()
     conn.close()
 
@@ -256,7 +258,8 @@ async def start_specific_test(call: types.CallbackQuery, state: FSMContext):
     test_id = int(call.data.split("_")[1])
     conn = get_db_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM questions WHERE test_id=%s", (test_id,))
+    # SHU QATORNI ALMASHTIRING:
+    cursor.execute("SELECT id, test_id, question_photo_id, correct_answer_photo_id, wrong1_photo_id, wrong2_photo_id, wrong3_photo_id, time_limit, creator_id FROM questions WHERE test_id=%s ORDER BY id", (test_id,))
     questions = cursor.fetchall()
     conn.close()
 
@@ -341,6 +344,26 @@ async def go_next_quiz(call: types.CallbackQuery, state: FSMContext):
     await call.message.delete()
     await send_current_question(call.message, state)
     await call.answer()
+
+@dp.callback_query(F.data.startswith("delq_"))
+async def process_delete_question(call: types.CallbackQuery):
+    _, q_id, creator_id = call.data.split("_")
+    
+    # RUXSATNI TEKSHIRAMIZ: Faqat Admin yoki Testni yaratgan odam o'chira oladi!
+    if call.from_user.id == ADMIN_ID or str(call.from_user.id) == creator_id:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM questions WHERE id = %s", (int(q_id),))
+        conn.commit()
+        conn.close()
+        
+        # Ekrandagi tugmani va yozuvni o'chirib tashlab ogohlantiramiz
+        await call.answer("✅ Savol muvaffaqiyatli o'chirildi!", show_alert=True)
+        await call.message.edit_text("🚫 Bu savol ma'lumotlar bazasidan o'chirib tashlandi.\nSiz bemalol 'Keyingi savol'ga o'tishingiz mumkin.")
+    else:
+        # Begona odam bossa chiqadigan ogohlantirish (show_alert=True qilingani uchun tepadan qizil bo'lib chiqadi)
+        await call.answer("❌ Kechirasiz, sizda bu savolni o'chirish huquqi yo'q. Faqat admin yoki savol muallifi o'chira oladi!", show_alert=True)
+
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(call: types.CallbackQuery, state: FSMContext):
