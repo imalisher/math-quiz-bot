@@ -324,9 +324,17 @@ async def send_current_question(message: types.Message, state: FSMContext):
     await state.update_data(current_poll_id=quiz_poll.poll.id)
     await state.set_state(SolveQuiz.IN_PROGRESS)
 
+   # === MANA SHU QISM YANGILANDI ===
+    q_id = q_row[0]
+    creator_id = q_row[8]
+
     builder = InlineKeyboardBuilder()
     builder.button(text="Keyingi savol ➡️", callback_data="next_q_quiz")
+    builder.button(text="🗑 O'chirish", callback_data=f"delq_{q_id}_{creator_id}")
+    builder.adjust(1)
+    
     await message.answer("Javobni belgilab bo'lgach, keyingi savolga o'tish uchun bosing 👇", reply_markup=builder.as_markup())
+    # ===============================
 
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer: types.PollAnswer, state: FSMContext):
